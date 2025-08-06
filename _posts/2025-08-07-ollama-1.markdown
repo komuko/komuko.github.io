@@ -1,0 +1,48 @@
+---
+layout:     post
+title:      "本地访问服务器上的ollama的问题定位"
+subtitle:   ""
+date:       2025-08-07 00:00:00
+author:     "Hux"
+header-img: "img/post-bg-android.jpg"
+tags:
+    - ollama
+    - 产品
+---
+
+在阿里云的云服务器上部署了一个ollama并且成功下载了一个文本向量模型`nomic-embed-text`，本来开开心心想在本地访问服务器上的ollama接口，但是出了一些问题：
+## 问题现象1：
+请求接口返回502
+
+## 定位1：
+经过定位，ollama默认只监听本地11434端口，从本机通过公网地址访问服务器上的ollama访问不到。
+
+## 解决1：
+通过安装nginx反向代理，监听11433端口，转发到localhost的11434端口达成访问ollama的目的。但此时还是返回502。
+
+### Note：
+安装nginx的时候直接使用`yum install nginx -y`安装不了，经过定位是/etc/yum.conf里面把nginxexclude掉了（可恶的云厂商）。之后使用命令`sudo yum install nginx --disableexcludes=all -y`成功安装了。
+
+## 定位2：
+通过问AI，发现可能是云控制台里的防火墙没有放通11433端口导致，问了下云的AI助手果然是默认只放通22、80、443端口。
+
+## 解决2：
+在控制台的防火墙模板里配置了放通11433端口。
+
+## 问题现象2：
+请求接口返回403
+
+## 定位3：
+查看nginx的access.log，发现请求的时候是有日志输出的，所以防火墙这一关是过了。后续通过查询AI找到了原因（贴一个过程）：
+
+OLLAMA 默认只允许访问 localhost 或 127.0.0.1，如果代理转发时 Host 变成了其他内容（如 IP 地址或自定义域名）就会被拒绝，返回403。
+我的nginx配置为：
+、、、
+proxy_set_header Host $host;
+、、、
+这样外部请求 Host 如果不是 127.0.0.1，会传递给 Ollama，触发限制。
+将 nginx 的 Host 固定为 127.0.0.1，让 Ollama 认为这个请求来自本机：
+、、、
+proxy_set_header Host 127.0.0.1; # 关键调整
+、、、
+就可以正常访问了。
